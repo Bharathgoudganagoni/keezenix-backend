@@ -1,3 +1,5 @@
+require("dotenv").config();
+const fs = require("fs");
 const express = require("express");
 const nodemailer = require("nodemailer");
 const multer = require("multer");
@@ -7,13 +9,35 @@ const app = express();
 
 // ✅ CORS (important for frontend)
 app.use(cors({
-  origin: "*"
+  origin: process.env.CORS_ORIGIN || "*"
 }));
 
 app.use(express.json());
 
+// ✅ Request Logger
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+});
+
 // ✅ File upload
-const upload = multer({ dest: "uploads/" });
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = [
+    "application/pdf", 
+    "application/msword", 
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/jpeg",
+    "image/png",
+    "image/jpg"
+  ];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("INVALID_TYPE"));
+  }
+};
+const upload = multer({ dest: "uploads/", fileFilter });
+const uploadMiddleware = upload.single("resume");
 
 // ✅ Email config (USE ENV VARIABLES)
 const transporter = nodemailer.createTransport({
@@ -30,16 +54,33 @@ app.get("/", (req, res) => {
 });
 
 // ✅ API
-app.post("/apply", upload.single("resume"), async (req, res) => {
+app.post("/apply", (req, res, next) => {
+  console.log("--- New Application Request Started ---");
+  uploadMiddleware(req, res, (err) => {
+    if (err) {
+      console.error("❌ Multer Error:", err.message);
+      if (err.message === "INVALID_TYPE") {
+        return res.status(400).send("Invalid file type. Supported types: PDF, DOC, DOCX, JPG, PNG");
+      }
+      return res.status(500).send("File upload error");
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const { name, email, phone, message } = req.body;
     const file = req.file;
 
+    console.log("📋 Received Fields:", { name, email, phone, message: message ? "Present" : "None" });
+    console.log("📁 File Uploaded:", file ? file.filename : "None");
+
     // ✅ Safety check
     if (!file) {
+      console.error("❌ No resume uploaded");
       return res.status(400).send("No resume uploaded");
     }
 
+    console.log("📧 Attempting to send email...");
     await transporter.sendMail({
       from: `"Keezenix Careers" <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_USER, // your sir mail
@@ -77,10 +118,29 @@ app.post("/apply", upload.single("resume"), async (req, res) => {
       ]
     });
 
+    // ✅ Clean up the file after successful send
+    if (file && file.path) {
+      fs.unlink(file.path, (e) => { 
+        if (e) console.error("❌ Cleanup error:", e); 
+        else console.log("🧹 Temporary file cleaned up successfully.");
+      });
+    }
+
+    console.log(`✅ SUCCESS: Email sent successfully for candidate: ${email}`);
     res.send("Application sent successfully");
 
   } catch (err) {
-    console.error("EMAIL ERROR:", err);
+    console.error(`❌ FAILURE: Error processing application for candidate: ${req.body?.email || "Unknown"}`);
+    console.error(`❌ ERROR DETAILS: ${err.message}`);
+    
+    // ✅ Clean up the file if an error occurred during sending
+    if (req.file && req.file.path) {
+      fs.unlink(req.file.path, (e) => { 
+        if (e) console.error("❌ Cleanup error during failure:", e);
+        else console.log("🧹 Temporary file cleaned up after failure.");
+      });
+    }
+
     res.status(500).send("Error sending application");
   }
 });
