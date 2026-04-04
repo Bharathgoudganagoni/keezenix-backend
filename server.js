@@ -83,7 +83,7 @@ app.post("/apply", (req, res, next) => {
     console.log("📧 Attempting to send email...");
     await transporter.sendMail({
       from: `"Keezenix Careers" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER, // your sir mail
+      to: process.env.EMAIL_RECEIVER, 
 
       subject: `New Job Application - ${name}`,
 
