@@ -68,10 +68,11 @@ app.post("/apply", (req, res, next) => {
   });
 }, async (req, res) => {
   try {
-    const { name, email, phone, message } = req.body;
+    const { name, email, phone, message, job_title, jobTitle } = req.body;
     const file = req.file;
+    const finalJobTitle = job_title || jobTitle || "Not Specified";
 
-    console.log("📋 Received Fields:", { name, email, phone, message: message ? "Present" : "None" });
+    console.log("📋 Received Fields:", { name, email, phone, job_title: finalJobTitle, message: message ? "Present" : "None" });
     console.log("📁 File Uploaded:", file ? file.filename : "None");
 
     // ✅ Safety check
@@ -85,7 +86,7 @@ app.post("/apply", (req, res, next) => {
       from: `"Keezenix Careers" <${process.env.EMAIL_USER}>`,
       to: process.env.EMAIL_RECEIVER, 
 
-      subject: `New Job Application - ${name}`,
+      subject: `New Job Application - ${name} (${finalJobTitle})`,
 
       html: `
         <div style="font-family: Arial; line-height: 1.6;">
@@ -98,6 +99,7 @@ app.post("/apply", (req, res, next) => {
             <li><b>Name:</b> ${name}</li>
             <li><b>Email:</b> ${email}</li>
             <li><b>Phone:</b> ${phone}</li>
+            <li><b>Job Title:</b> ${finalJobTitle}</li>
           </ul>
 
           <h3>Message:</h3>
