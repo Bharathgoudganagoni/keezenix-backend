@@ -149,7 +149,7 @@ app.post("/apply", (req, res, next) => {
       });
     }
 
-    res.status(500).send("Error sending application");
+    res.status(500).send(`Error sending application: ${err.message}`);
   }
 });
 
