@@ -4,6 +4,11 @@ const dns = require("dns");
 // ✅ Force IPv4 DNS resolution first to prevent ENETUNREACH errors on hosts without IPv6 routing (e.g. Render)
 if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder("ipv4first");
+  console.log("Node Version:", process.version);
+
+dns.lookup("smtp.gmail.com", { all: true }, (err, addresses) => {
+  console.log("SMTP DNS Results:", addresses);
+});
 }
 const fs = require("fs");
 const express = require("express");
@@ -52,7 +57,6 @@ const transporter = nodemailer.createTransport({
   port: 587,
   secure: false,
   requireTLS: true,
-  family: 4,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
