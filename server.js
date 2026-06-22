@@ -46,11 +46,24 @@ const upload = multer({ dest: "uploads/", fileFilter });
 const uploadMiddleware = upload.single("resume");
 
 // ✅ Email config (USE ENV VARIABLES)
+// ✅ Email config (Render/Gmail compatible)
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  requireTLS: true,
   auth: {
     user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// ✅ Verify SMTP connection on startup
+transporter.verify((error, success) => {
+  if (error) {
+    console.error("❌ SMTP Verification Failed:", error);
+  } else {
+    console.log("✅ SMTP Server Ready");
   }
 });
 
