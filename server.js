@@ -1,4 +1,10 @@
 require("dotenv").config();
+const dns = require("dns");
+
+// ✅ Force IPv4 DNS resolution first to prevent ENETUNREACH errors on hosts without IPv6 routing (e.g. Render)
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder("ipv4first");
+}
 const fs = require("fs");
 const express = require("express");
 const nodemailer = require("nodemailer");
@@ -143,7 +149,7 @@ app.post("/apply", (req, res, next) => {
       });
     }
 
-    res.status(500).send("Error sending application: " + err.message);
+    res.status(500).send("Error sending application");
   }
 });
 
