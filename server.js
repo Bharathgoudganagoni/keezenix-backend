@@ -6,21 +6,42 @@ if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder("ipv4first");
   console.log("Node Version:", process.version);
 
-dns.lookup("smtp.gmail.com", { all: true }, (err, addresses) => {
-  console.log("SMTP DNS Results:", addresses);
-});
+  dns.lookup("smtp.gmail.com", { all: true }, (err, addresses) => {
+    console.log("SMTP DNS Results:", addresses);
+  });
 }
 const fs = require("fs");
 const express = require("express");
-const nodemailer = require("nodemailer");
 const multer = require("multer");
 const cors = require("cors");
 
 const app = express();
 
 // ✅ CORS (important for frontend)
+const allowedOrigin = process.env.CORS_ORIGIN || "*";
+// Also allow www variant automatically
+const allowedOrigins = new Set([
+  allowedOrigin,
+  allowedOrigin.replace("https://", "https://www."),
+  allowedOrigin.replace("https://www.", "https://"),
+].filter(Boolean));
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || "*"
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, or server-to-server)
+    if (!origin || allowedOrigin === "*") {
+      return callback(null, true);
+    }
+    // Allow local development origins
+    const isLocalhost = origin.startsWith("http://localhost:") || 
+                        origin.startsWith("https://localhost:") || 
+                        origin.startsWith("http://127.0.0.1:") || 
+                        origin.startsWith("https://127.0.0.1:");
+    if (isLocalhost || allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+    callback(null, false);
+  }
 }));
 
 app.use(express.json());
@@ -34,8 +55,8 @@ app.use((req, res, next) => {
 // ✅ File upload
 const fileFilter = (req, file, cb) => {
   const allowedTypes = [
-    "application/pdf", 
-    "application/msword", 
+    "application/pdf",
+    "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "image/jpeg",
     "image/png",
@@ -50,26 +71,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({ dest: "uploads/", fileFilter });
 const uploadMiddleware = upload.single("resume");
 
-// ✅ Email config (USE ENV VARIABLES)
-// ✅ Email config (Render/Gmail compatible)
-const transporter = nodemailer.createTransport({
-  host: "smtp-relay.brevo.com",
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
 
-// ✅ Verify SMTP connection on startup
-transporter.verify((error, success) => {
-  if (error) {
-    console.error("❌ SMTP Verification Failed:", error);
-  } else {
-    console.log("✅ SMTP Server Ready");
-  }
-});
 
 // ✅ Test route (optional but useful)
 app.get("/", (req, res) => {
@@ -104,49 +106,39 @@ app.post("/apply", (req, res, next) => {
       return res.status(400).send("No resume uploaded");
     }
 
-    console.log("📧 Attempting to send email...");
-    await transporter.sendMail({
-      from: `"Keezenix Careers" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_RECEIVER, 
+    console.log("📧 Reading resume file for EmailJS multipart upload...");
+    const fileBuffer = await fs.promises.readFile(file.path);
+    const fileObj = new File([fileBuffer], file.originalname, { type: file.mimetype });
 
-      subject: `New Job Application - ${name} (${finalJobTitle})`,
+    const formData = new FormData();
+    formData.append("service_id", process.env.EMAILJS_SERVICE_ID);
+    formData.append("template_id", process.env.EMAILJS_TEMPLATE_ID);
+    formData.append("user_id", process.env.EMAILJS_PUBLIC_KEY);
+    if (process.env.EMAILJS_PRIVATE_KEY) {
+      formData.append("accessToken", process.env.EMAILJS_PRIVATE_KEY);
+    }
+    formData.append("name", name);
+    formData.append("email", email);
+    formData.append("phone", phone);
+    formData.append("job_title", finalJobTitle);
+    formData.append("message", message || "No message provided");
+    formData.append("resume", fileObj);
 
-      html: `
-        <div style="font-family: Arial; line-height: 1.6;">
-          <p>Hi Sir,</p>
-
-          <p>You have received a new job application.</p>
-
-          <h3>Candidate Details:</h3>
-          <ul>
-            <li><b>Name:</b> ${name}</li>
-            <li><b>Email:</b> ${email}</li>
-            <li><b>Phone:</b> ${phone}</li>
-            <li><b>Job Title:</b> ${finalJobTitle}</li>
-          </ul>
-
-          <h3>Message:</h3>
-          <p>${message}</p>
-
-          <p>Resume is attached below.</p>
-
-          <br/>
-          <p>Regards,<br/>Keezenix Careers Portal</p>
-        </div>
-      `,
-
-      attachments: [
-        {
-          filename: file.originalname,
-          path: file.path
-        }
-      ]
+    console.log("📧 Attempting to send email via EmailJS (send-form)...");
+    const emailjsResponse = await fetch("https://api.emailjs.com/api/v1.0/email/send-form", {
+      method: "POST",
+      body: formData,
     });
+
+    if (!emailjsResponse.ok) {
+      const errorText = await emailjsResponse.text();
+      throw new Error(`EmailJS failed with status ${emailjsResponse.status}: ${errorText}`);
+    }
 
     // ✅ Clean up the file after successful send
     if (file && file.path) {
-      fs.unlink(file.path, (e) => { 
-        if (e) console.error("❌ Cleanup error:", e); 
+      fs.unlink(file.path, (e) => {
+        if (e) console.error("❌ Cleanup error:", e);
         else console.log("🧹 Temporary file cleaned up successfully.");
       });
     }
@@ -157,10 +149,10 @@ app.post("/apply", (req, res, next) => {
   } catch (err) {
     console.error(`❌ FAILURE: Error processing application for candidate: ${req.body?.email || "Unknown"}`);
     console.error(`❌ ERROR DETAILS: ${err.message}`);
-    
+
     // ✅ Clean up the file if an error occurred during sending
     if (req.file && req.file.path) {
-      fs.unlink(req.file.path, (e) => { 
+      fs.unlink(req.file.path, (e) => {
         if (e) console.error("❌ Cleanup error during failure:", e);
         else console.log("🧹 Temporary file cleaned up after failure.");
       });
