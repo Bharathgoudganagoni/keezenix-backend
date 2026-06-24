@@ -98,7 +98,7 @@ app.post("/apply", (req, res, next) => {
     const finalJobTitle = job_title || jobTitle || "Not Specified";
 
     console.log("📋 Received Fields:", { name, email, phone, job_title: finalJobTitle, message: message ? "Present" : "None" });
-    console.log("📁 File Uploaded:", file ? file.filename : "None");
+    console.log("📁 File Uploaded:", file ? file.originalname : "None");
 
     // ✅ Safety check
     if (!file) {
@@ -106,28 +106,48 @@ app.post("/apply", (req, res, next) => {
       return res.status(400).send("No resume uploaded");
     }
 
-    console.log("📧 Reading resume file for EmailJS multipart upload...");
+    // ✅ STEP 1: Upload resume to Cloudinary (get a URL — avoids EmailJS 50KB limit)
+    console.log("☁️ Uploading resume to Cloudinary...");
     const fileBuffer = await fs.promises.readFile(file.path);
     const fileObj = new File([fileBuffer], file.originalname, { type: file.mimetype });
 
-    const formData = new FormData();
-    formData.append("service_id", process.env.EMAILJS_SERVICE_ID);
-    formData.append("template_id", process.env.EMAILJS_TEMPLATE_ID);
-    formData.append("user_id", process.env.EMAILJS_PUBLIC_KEY);
-    if (process.env.EMAILJS_PRIVATE_KEY) {
-      formData.append("accessToken", process.env.EMAILJS_PRIVATE_KEY);
-    }
-    formData.append("name", name);
-    formData.append("email", email);
-    formData.append("phone", phone);
-    formData.append("job_title", finalJobTitle);
-    formData.append("message", message || "No message provided");
-    formData.append("resume", fileObj);
+    const cloudFormData = new FormData();
+    cloudFormData.append("file", fileObj);
+    cloudFormData.append("upload_preset", process.env.CLOUDINARY_UPLOAD_PRESET || "resume_upload");
+    cloudFormData.append("resource_type", "raw");
 
-    console.log("📧 Attempting to send email via EmailJS (send-form)...");
-    const emailjsResponse = await fetch("https://api.emailjs.com/api/v1.0/email/send-form", {
+    const cloudRes = await fetch(
+      `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME || "dlvcvmqpr"}/raw/upload`,
+      { method: "POST", body: cloudFormData }
+    );
+    const cloudData = await cloudRes.json();
+
+    if (!cloudRes.ok) {
+      throw new Error(`Cloudinary upload failed: ${cloudData.error?.message || cloudRes.status}`);
+    }
+
+    const resumeUrl = cloudData.secure_url;
+    console.log("✅ Resume uploaded to Cloudinary:", resumeUrl);
+
+    // ✅ STEP 2: Send email via EmailJS JSON API (only URL — no file binary, no size limit hit)
+    console.log("📧 Sending email via EmailJS JSON API...");
+    const emailjsResponse = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
       method: "POST",
-      body: formData,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service_id: process.env.EMAILJS_SERVICE_ID,
+        template_id: process.env.EMAILJS_TEMPLATE_ID,
+        user_id: process.env.EMAILJS_PUBLIC_KEY,
+        accessToken: process.env.EMAILJS_PRIVATE_KEY,
+        template_params: {
+          name,
+          email,
+          phone,
+          job_title: finalJobTitle,
+          message: message || "No message provided",
+          resume_link: resumeUrl
+        }
+      })
     });
 
     if (!emailjsResponse.ok) {
@@ -135,7 +155,7 @@ app.post("/apply", (req, res, next) => {
       throw new Error(`EmailJS failed with status ${emailjsResponse.status}: ${errorText}`);
     }
 
-    // ✅ Clean up the file after successful send
+    // ✅ Clean up temp file
     if (file && file.path) {
       fs.unlink(file.path, (e) => {
         if (e) console.error("❌ Cleanup error:", e);
@@ -150,7 +170,7 @@ app.post("/apply", (req, res, next) => {
     console.error(`❌ FAILURE: Error processing application for candidate: ${req.body?.email || "Unknown"}`);
     console.error(`❌ ERROR DETAILS: ${err.message}`);
 
-    // ✅ Clean up the file if an error occurred during sending
+    // ✅ Clean up temp file on error
     if (req.file && req.file.path) {
       fs.unlink(req.file.path, (e) => {
         if (e) console.error("❌ Cleanup error during failure:", e);
